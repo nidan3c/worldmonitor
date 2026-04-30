@@ -12,12 +12,12 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
     politics: [
       { name: 'BBC World', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
       { name: 'Guardian World', url: 'https://www.theguardian.com/world/rss' },
-      { name: 'AP News', url: gn('site:apnews.com') },
-      { name: 'Reuters World', url: gn('site:reuters.com world') },
+      { name: 'AP News', url: gn('site:apnews.com when:1d') },
+      { name: 'Reuters World', url: gn('site:reuters.com world when:1d') },
       { name: 'CNN World', url: gn('site:cnn.com world news when:1d') },
     ],
     us: [
-      { name: 'Reuters US', url: gn('site:reuters.com US') },
+      { name: 'Reuters US', url: gn('site:reuters.com US when:1d') },
       { name: 'NPR News', url: 'https://feeds.npr.org/1001/rss.xml' },
       { name: 'PBS NewsHour', url: 'https://www.pbs.org/newshour/feeds/rss/headlines' },
       { name: 'ABC News', url: 'https://feeds.abcnews.com/abcnews/topstories' },
@@ -64,18 +64,36 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'MarketWatch', url: gn('site:marketwatch.com markets when:1d') },
       { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex' },
       { name: 'Financial Times', url: 'https://www.ft.com/rss/home' },
-      { name: 'Reuters Business', url: gn('site:reuters.com business markets') },
+      { name: 'Reuters Business', url: gn('site:reuters.com business markets when:1d') },
     ],
     gov: [
-      { name: 'White House', url: gn('site:whitehouse.gov') },
-      { name: 'State Dept', url: gn('site:state.gov OR "State Department"') },
-      { name: 'Pentagon', url: gn('site:defense.gov OR Pentagon') },
+      // White House: two direct WordPress RSS feeds. Replaces
+      // gn('site:whitehouse.gov ...') so the publisher's pubDate is
+      // authoritative and old re-indexed pages can't slip through.
+      // briefings-statements covers daily press releases; presidential-actions
+      // covers EOs / proclamations / nominations.
+      { name: 'White House', url: 'https://www.whitehouse.gov/briefings-statements/feed/' },
+      { name: 'White House Actions', url: 'https://www.whitehouse.gov/presidential-actions/feed/' },
+      // State Dept, Treasury, DOJ: no working public RSS feed at any
+      // verified path (probed 2026-04-26). Federal Register fallback is
+      // bot-blocked. Stuck on Google News until a per-agency HTML scraper
+      // or destination-pubDate cross-check ships. The READ-time freshness
+      // floor in seed-digest-notifications.mjs::buildDigest mitigates the
+      // residue gap; PR-3417's when:1d gates new ingests by Google's
+      // honest-relayed source pubDate. See:
+      //   skill: ingest-gate-tightening-leaves-residue-in-read-path
+      { name: 'State Dept', url: gn('(site:state.gov OR "State Department") when:1d') },
+      // Pentagon: direct war.gov RSS (post-rebrand). Replaces
+      // gn('(site:defense.gov OR Pentagon) when:1d') for the same reason
+      // as White House — the publisher's pubDate is authoritative, no
+      // re-indexing surprises.
+      { name: 'Pentagon', url: 'https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945' },
       { name: 'Federal Reserve', url: 'https://www.federalreserve.gov/feeds/press_all.xml' },
       { name: 'SEC', url: 'https://www.sec.gov/news/pressreleases.rss' },
       { name: 'UN News', url: 'https://news.un.org/feed/subscribe/en/news/all/rss.xml' },
       { name: 'CISA', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml' },
-      { name: 'Treasury', url: gn('site:treasury.gov') },
-      { name: 'DOJ', url: gn('site:justice.gov') },
+      { name: 'Treasury', url: gn('site:treasury.gov when:1d') },
+      { name: 'DOJ', url: gn('site:justice.gov when:1d') },
     ],
     africa: [
       { name: 'BBC Africa', url: 'https://feeds.bbci.co.uk/news/world/africa/rss.xml' },
@@ -88,7 +106,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'BBC Latin America', url: 'https://feeds.bbci.co.uk/news/world/latin_america/rss.xml' },
       { name: 'Guardian Americas', url: 'https://www.theguardian.com/world/americas/rss' },
       { name: 'Primicias', url: 'https://www.primicias.ec/feed/', lang: 'es' },
-      { name: 'Infobae Americas', url: 'https://www.infobae.com/feeds/rss/', lang: 'es' },
+      { name: 'Infobae Americas', url: 'https://www.infobae.com/arc/outboundfeeds/rss/', lang: 'es' },
       { name: 'El Universo', url: 'https://www.eluniverso.com/arc/outboundfeeds/rss/category/noticias/?outputType=xml', lang: 'es' },
       { name: 'Clarín', url: 'https://www.clarin.com/rss/lo-ultimo/', lang: 'es' },
       { name: 'InSight Crime', url: 'https://insightcrime.org/feed/' },
@@ -113,7 +131,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'Atlantic Council', url: 'https://www.atlanticcouncil.org/feed/' },
       { name: 'Foreign Affairs', url: 'https://www.foreignaffairs.com/rss.xml' },
       { name: 'War on the Rocks', url: 'https://warontherocks.com/feed/' },
-      { name: 'CSIS', url: 'https://www.csis.org/feed' },
+      { name: 'CSIS', url: 'https://www.csis.org/rss.xml' },
     ],
     crisis: [
       { name: 'CrisisWatch', url: 'https://www.crisisgroup.org/rss' },
@@ -121,7 +139,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'WHO', url: 'https://www.who.int/rss-feeds/news-english.xml' },
     ],
     layoffs: [
-      { name: 'Layoffs.fyi', url: gn('tech+company+layoffs+announced') },
+      { name: 'Layoffs.fyi', url: gn('tech+company+layoffs+announced when:3d') },
       { name: 'TechCrunch Layoffs', url: 'https://techcrunch.com/tag/layoffs/feed/' },
       { name: 'Layoffs News', url: gn('(layoffs OR "job cuts" OR "workforce reduction") when:3d') },
     ],
@@ -147,8 +165,8 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
     ],
     vcblogs: [
       { name: 'Y Combinator Blog', url: 'https://www.ycombinator.com/blog/rss/' },
-      { name: 'a16z Blog', url: 'https://a16z.com/feed/' },
-      { name: 'First Round Review', url: 'https://review.firstround.com/feed.xml' },
+      { name: 'a16z Blog', url: 'https://www.a16z.news/feed' },
+      { name: 'First Round Review', url: 'https://review.firstround.com/articles/rss' },
       { name: 'Sequoia Blog', url: 'https://www.sequoiacap.com/feed/' },
       { name: 'Stratechery', url: 'https://stratechery.com/feed/' },
     ],
@@ -239,6 +257,21 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
     crypto: [
       { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
       { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
+      { name: 'The Block', url: 'https://news.google.com/rss/search?q=site:theblock.co+when:1d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Decrypt', url: 'https://decrypt.co/feed' },
+      { name: 'Blockworks', url: 'https://blockworks.co/feed' },
+      { name: 'The Defiant', url: 'https://thedefiant.io/feed' },
+      { name: 'Bitcoin Magazine', url: 'https://bitcoinmagazine.com/feed' },
+      { name: 'DL News', url: 'https://news.google.com/rss/search?q=site:dlnews.com+when:3d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'CryptoSlate', url: 'https://cryptoslate.com/feed/' },
+      { name: 'Unchained', url: 'https://unchainedcrypto.com/feed/' },
+      { name: 'DeFi News', url: 'https://news.google.com/rss/search?q=(DeFi+OR+"decentralized+finance")+when:3d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Bloomberg Crypto', url: 'https://news.google.com/rss/search?q=bloomberg+crypto+when:1d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Reuters Crypto', url: 'https://news.google.com/rss/search?q=reuters+crypto+when:1d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Wu Blockchain', url: 'https://news.google.com/rss/search?q=site:wublockchain.com+when:7d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Messari', url: 'https://news.google.com/rss/search?q=site:messari.io+when:3d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'NFT News', url: 'https://news.google.com/rss/search?q=(NFT+OR+"non-fungible")+when:3d&hl=en-US&gl=US&ceid=US:en' },
+      { name: 'Stablecoin Policy', url: 'https://news.google.com/rss/search?q=(stablecoin+regulation+OR+"stablecoin+bill")+when:7d&hl=en-US&gl=US&ceid=US:en' },
     ],
     centralbanks: [
       { name: 'Federal Reserve', url: 'https://www.federalreserve.gov/feeds/press_all.xml' },
@@ -364,6 +397,13 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'Seeking Alpha Metals', url: gn('site:seekingalpha.com (gold OR silver OR copper OR mining) when:2d') },
       { name: 'Commodity Futures', url: gn('(COMEX OR NYMEX OR "commodity futures" OR CME commodities) when:2d') },
     ],
+    finance: [
+      { name: 'CNBC', url: 'https://www.cnbc.com/id/100003114/device/rss/rss.html' },
+      { name: 'MarketWatch', url: gn('site:marketwatch.com markets when:1d') },
+      { name: 'Yahoo Finance', url: 'https://finance.yahoo.com/news/rssindex' },
+      { name: 'Financial Times', url: 'https://www.ft.com/rss/home' },
+      { name: 'Reuters Business', url: gn('site:reuters.com business markets when:1d') },
+    ],
   },
 
   happy: {
@@ -372,7 +412,6 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'Positive.News', url: 'https://www.positive.news/feed/' },
       { name: 'Reasons to be Cheerful', url: 'https://reasonstobecheerful.world/feed/' },
       { name: 'Optimist Daily', url: 'https://www.optimistdaily.com/feed/' },
-      { name: 'My Modern Met', url: 'https://mymodernmet.com/feed/' },
     ],
     science: [
       { name: 'ScienceDaily', url: 'https://www.sciencedaily.com/rss/all.xml' },
@@ -397,20 +436,19 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
 
 export const INTEL_SOURCES: ServerFeed[] = [
   { name: 'Defense One', url: 'https://www.defenseone.com/rss/all/' },
-  { name: 'Breaking Defense', url: 'https://breakingdefense.com/feed/' },
   { name: 'The War Zone', url: 'https://www.twz.com/feed' },
   { name: 'Defense News', url: 'https://www.defensenews.com/arc/outboundfeeds/rss/?outputType=xml' },
   { name: 'Military Times', url: 'https://www.militarytimes.com/arc/outboundfeeds/rss/?outputType=xml' },
   { name: 'Task & Purpose', url: 'https://taskandpurpose.com/feed/' },
-  { name: 'USNI News', url: 'https://news.usni.org/feed' },
+  { name: 'USNI News', url: 'https://news.google.com/rss/search?q=site:news.usni.org+when:3d&hl=en-US&gl=US&ceid=US:en' },
   { name: 'gCaptain', url: 'https://gcaptain.com/feed/' },
   { name: 'Oryx OSINT', url: 'https://www.oryxspioenkop.com/feeds/posts/default?alt=rss' },
   { name: 'Foreign Policy', url: 'https://foreignpolicy.com/feed/' },
   { name: 'Foreign Affairs', url: 'https://www.foreignaffairs.com/rss.xml' },
   { name: 'Atlantic Council', url: 'https://www.atlanticcouncil.org/feed/' },
-  { name: 'Bellingcat', url: gn('site:bellingcat.com') },
+  { name: 'Bellingcat', url: gn('site:bellingcat.com when:7d') },
   { name: 'Krebs Security', url: 'https://krebsonsecurity.com/feed/' },
-  { name: 'Arms Control Assn', url: gn('site:armscontrol.org') },
-  { name: 'Bulletin of Atomic Scientists', url: gn('site:thebulletin.org') },
+  { name: 'Arms Control Assn', url: gn('site:armscontrol.org when:7d') },
+  { name: 'Bulletin of Atomic Scientists', url: gn('site:thebulletin.org when:7d') },
   { name: 'FAO News', url: 'https://www.fao.org/feeds/fao-newsroom-rss' },
 ];

@@ -110,7 +110,7 @@ describe('redis caching behavior', { concurrency: 1 }, () => {
       assert.deepEqual(b, { value: 42 });
       assert.deepEqual(c, { value: 42 });
       assert.equal(getCalls, 3, 'each caller should still attempt one cache read');
-      assert.equal(setCalls, 1, 'only one cache write should happen after coalesced fetch');
+      assert.ok(setCalls >= 1, 'at least one cache write should happen after coalesced fetch (data + optional seed-meta)');
     } finally {
       globalThis.fetch = originalFetch;
       restoreEnv();
@@ -463,47 +463,35 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
     });
   }
 
-  it('coalesces concurrent calls into a single upstream fetch', async () => {
+  it('reads live data from Redis without making upstream calls', async () => {
     const { module, cleanup } = await importTheaterPosture();
     const restoreEnv = withEnv({
-      LOCAL_API_MODE: 'sidecar',
-      WS_RELAY_URL: undefined,
-      WINGBITS_API_KEY: undefined,
       UPSTASH_REDIS_REST_URL: 'https://redis.test',
       UPSTASH_REDIS_REST_TOKEN: 'token',
-      VERCEL_ENV: undefined,
-      VERCEL_GIT_COMMIT_SHA: undefined,
     });
     const originalFetch = globalThis.fetch;
 
+    const liveData = { theaters: [{ theater: 'live-test', postureLevel: 'elevated', activeFlights: 5, trackedVessels: 0, activeOperations: [], assessedAt: Date.now() }] };
     let openskyFetchCount = 0;
     globalThis.fetch = async (url) => {
       const raw = String(url);
-      if (raw.includes('/get/') || raw.includes('/pipeline')) {
+      if (raw.includes('/get/')) {
+        const key = decodeURIComponent(raw.split('/get/').pop() || '');
+        if (key === 'theater-posture:sebuf:v1') {
+          return jsonResponse({ result: JSON.stringify(liveData) });
+        }
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/')) {
-        return jsonResponse({ result: 'OK' });
-      }
-      if (raw.includes('opensky-network.org')) {
+      if (raw.includes('opensky-network.org') || raw.includes('wingbits.com')) {
         openskyFetchCount += 1;
-        await new Promise((r) => setTimeout(r, 10));
-        return mockOpenSkyResponse();
       }
       return jsonResponse({}, false);
     };
 
     try {
-      const [a, b, c] = await Promise.all([
-        module.getTheaterPosture({}, {}),
-        module.getTheaterPosture({}, {}),
-        module.getTheaterPosture({}, {}),
-      ]);
-
-      assert.equal(openskyFetchCount, 2, 'coalesced into one fetcher invocation × 2 theater query regions');
-      assert.ok(a.theaters.length > 0, 'should return theater posture data');
-      assert.deepEqual(a, b, 'all callers should receive the same result');
-      assert.deepEqual(b, c, 'all callers should receive the same result');
+      const result = await module.getTheaterPosture({}, {});
+      assert.equal(openskyFetchCount, 0, 'must not call upstream APIs (Redis-read-only)');
+      assert.deepEqual(result, liveData, 'should return live Redis data');
     } finally {
       cleanup();
       globalThis.fetch = originalFetch;
@@ -533,7 +521,7 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
         if (key === 'theater-posture:sebuf:v1') {
           return jsonResponse({ result: undefined });
         }
-        if (key === 'theater-posture:sebuf:stale:v1') {
+        if (key === 'theater_posture:sebuf:stale:v1') {
           return jsonResponse({ result: JSON.stringify(staleData) });
         }
         return jsonResponse({ result: undefined });
@@ -594,16 +582,11 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
     }
   });
 
-  it('awaits stale/backup writes before returning', async () => {
+  it('does not write to Redis (read-only handler)', async () => {
     const { module, cleanup } = await importTheaterPosture();
     const restoreEnv = withEnv({
-      LOCAL_API_MODE: 'sidecar',
-      WS_RELAY_URL: undefined,
-      WINGBITS_API_KEY: undefined,
       UPSTASH_REDIS_REST_URL: 'https://redis.test',
       UPSTASH_REDIS_REST_TOKEN: 'token',
-      VERCEL_ENV: undefined,
-      VERCEL_GIT_COMMIT_SHA: undefined,
     });
     const originalFetch = globalThis.fetch;
 
@@ -613,23 +596,16 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
       if (raw.includes('/get/')) {
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/')) {
-        const key = decodeURIComponent(raw.split('/set/').pop()?.split('/').shift() || '');
-        cacheWrites.push(key);
+      if (raw.includes('/set/') || raw.includes('/pipeline')) {
+        cacheWrites.push(raw);
         return jsonResponse({ result: 'OK' });
-      }
-      if (raw.includes('opensky-network.org')) {
-        return mockOpenSkyResponse();
       }
       return jsonResponse({}, false);
     };
 
     try {
       await module.getTheaterPosture({}, {});
-      const staleWritten = cacheWrites.some((k) => k.includes('stale'));
-      const backupWritten = cacheWrites.some((k) => k.includes('backup'));
-      assert.ok(staleWritten, 'stale tier should be written before response returns');
-      assert.ok(backupWritten, 'backup tier should be written before response returns');
+      assert.equal(cacheWrites.length, 0, 'handler must not write to Redis (read-only)');
     } finally {
       cleanup();
       globalThis.fetch = originalFetch;
@@ -644,6 +620,12 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
       './_shared': resolve(root, 'server/worldmonitor/intelligence/v1/_shared.ts'),
       '../../../_shared/constants': resolve(root, 'server/_shared/constants.ts'),
       '../../../_shared/redis': resolve(root, 'server/_shared/redis.ts'),
+      '../../../_shared/llm-health': resolve(root, 'tests/helpers/llm-health-stub.ts'),
+      '../../../_shared/llm': resolve(root, 'server/_shared/llm.ts'),
+      '../../../_shared/hash': resolve(root, 'server/_shared/hash.ts'),
+      '../../../_shared/premium-check': resolve(root, 'tests/helpers/premium-check-stub.ts'),
+      '../../../_shared/llm-sanitize.js': resolve(root, 'server/_shared/llm-sanitize.js'),
+      '../../../_shared/cache-keys': resolve(root, 'server/_shared/cache-keys.ts'),
     });
   }
 
@@ -676,6 +658,9 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
 
     globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      if (raw === 'https://api.groq.com') {
+        return jsonResponse({});
+      }
       if (raw.includes('/get/')) {
         const key = parseRedisKey(raw, 'get');
         return jsonResponse({ result: store.get(key) });
@@ -684,7 +669,7 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
         const key = parseRedisKey(raw, 'set');
         const encodedValue = raw.slice(raw.indexOf('/set/') + 5).split('/')[1] || '';
         store.set(key, decodeURIComponent(encodedValue));
-        setKeys.push(key);
+        if (!key.startsWith('seed-meta:')) setKeys.push(key);
         return jsonResponse({ result: 'OK' });
       }
       if (raw.includes('api.groq.com/openai/v1/chat/completions')) {
@@ -705,8 +690,8 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
       assert.equal(groqCalls, 2, 'different contexts should not share one cache entry');
       assert.equal(setKeys.length, 2, 'one cache write per unique context');
       assert.notEqual(setKeys[0], setKeys[1], 'context hash should differentiate cache keys');
-      assert.ok(setKeys[0]?.startsWith('ci-sebuf:v2:IL:'), 'cache key should use v2 country-intel namespace');
-      assert.ok(setKeys[1]?.startsWith('ci-sebuf:v2:IL:'), 'cache key should use v2 country-intel namespace');
+      assert.ok(setKeys[0]?.startsWith('ci-sebuf:v3:IL:'), 'cache key should use v3 country-intel namespace');
+      assert.ok(setKeys[1]?.startsWith('ci-sebuf:v3:IL:'), 'cache key should use v3 country-intel namespace');
       assert.equal(alpha.brief, 'brief-1');
       assert.equal(beta.brief, 'brief-2');
       assert.equal(alphaCached.brief, 'brief-1', 'same context should hit cache');
@@ -737,6 +722,9 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
 
     globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      if (raw === 'https://api.groq.com') {
+        return jsonResponse({});
+      }
       if (raw.includes('/get/')) {
         const key = parseRedisKey(raw, 'get');
         return jsonResponse({ result: store.get(key) });
@@ -745,7 +733,7 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
         const key = parseRedisKey(raw, 'set');
         const encodedValue = raw.slice(raw.indexOf('/set/') + 5).split('/')[1] || '';
         store.set(key, decodeURIComponent(encodedValue));
-        setKeys.push(key);
+        if (!key.startsWith('seed-meta:')) setKeys.push(key);
         return jsonResponse({ result: 'OK' });
       }
       if (raw.includes('api.groq.com/openai/v1/chat/completions')) {
@@ -782,6 +770,7 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
       './_shared': resolve(root, 'server/worldmonitor/military/v1/_shared.ts'),
       '../../../_shared/constants': resolve(root, 'server/_shared/constants.ts'),
       '../../../_shared/redis': resolve(root, 'server/_shared/redis.ts'),
+      '../../../_shared/relay': resolve(root, 'server/_shared/relay.ts'),
       '../../../_shared/response-headers': resolve(root, 'server/_shared/response-headers.ts'),
     });
   }
@@ -823,8 +812,8 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
       const result = await module.listMilitaryFlights({}, request);
       assert.deepEqual(
         result.flights.map((flight) => flight.id),
-        ['in-bounds'],
-        'response should not include out-of-viewport flights',
+        ['IN-BOUNDS'],
+        'response should not include out-of-viewport flights (hex_code canonical form is uppercase)',
       );
 
       assert.equal(fetchUrls.length, 1);
@@ -882,6 +871,76 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
         result.flights.map((flight) => flight.id),
         ['cache-in'],
         'cached quantized-cell payload must be re-filtered to request bbox',
+      );
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  // #3277 — fetchStaleFallback NEG_TTL parity with the legacy
+  // /api/military-flights handler. Without the negative cache, a sustained
+  // relay+seed outage would Redis-hammer the stale key on every request.
+  it('suppresses stale Redis read for 30s after a stale-key miss (NEG_TTL parity)', async () => {
+    const { module, cleanup } = await importListMilitaryFlights();
+    module._resetStaleNegativeCacheForTests();
+
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      LOCAL_API_MODE: undefined,
+      WS_RELAY_URL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+
+    const staleGetCalls = [];
+    globalThis.fetch = async (url) => {
+      const raw = String(url);
+      if (raw.includes('/get/')) {
+        if (raw.includes('military%3Aflights%3Astale%3Av1')) {
+          staleGetCalls.push(raw);
+        }
+        // Both keys empty — drives cachedFetchJson to call the fetcher
+        // (which returns null because no relay) and then the handler falls
+        // through to fetchStaleFallback (which returns null because stale
+        // is also empty → arms the negative cache).
+        return jsonResponse({ result: null });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const ctx = { request: new Request('https://wm.test/api/military/v1/list-military-flights') };
+
+      // Call 1 — live empty + stale empty. Stale key MUST be read once,
+      // and the negative cache MUST be armed for the next 30s.
+      const r1 = await module.listMilitaryFlights(ctx, request);
+      assert.deepEqual(r1.flights, [], 'no live, no stale → empty response');
+      assert.equal(staleGetCalls.length, 1, 'first call reads stale key once');
+
+      // Call 2 — within the 30s negative-cache window. Live cache may be
+      // re-checked but the stale key MUST NOT be re-read.
+      staleGetCalls.length = 0;
+      const r2 = await module.listMilitaryFlights(ctx, request);
+      assert.deepEqual(r2.flights, [], 'still empty during negative-cache window');
+      assert.equal(
+        staleGetCalls.length,
+        0,
+        'second call within NEG_TTL window must not re-read stale key',
+      );
+
+      // Reset the negative cache (simulates wall-clock advance past 30s) →
+      // stale read should resume.
+      module._resetStaleNegativeCacheForTests();
+      const r3 = await module.listMilitaryFlights(ctx, request);
+      assert.deepEqual(r3.flights, []);
+      assert.equal(
+        staleGetCalls.length,
+        1,
+        'after negative-cache reset, stale key is re-read',
       );
     } finally {
       cleanup();

@@ -11,23 +11,19 @@ export interface ImportResult {
   error?: string;
 }
 
+import { CLOUD_SYNC_KEYS } from './sync-keys';
+
 const MAX_IMPORT_SIZE_BYTES = 5 * 1024 * 1024;
 
-const SETTINGS_KEY_PREFIXES = [
-  'worldmonitor-panels',
-  'worldmonitor-monitors',
-  'worldmonitor-layers',
-  'worldmonitor-disabled-feeds',
+const SETTINGS_KEY_PREFIXES: readonly string[] = [
+  ...CLOUD_SYNC_KEYS,
+  // device-local / export-only (excluded from cloud sync)
   'worldmonitor-live-channels',
-  'worldmonitor-map-mode',
-  'worldmonitor-variant',
-  'worldmonitor-theme',
-  'worldmonitor-panel-spans',
-  'worldmonitor-panel-order',
+  'worldmonitor-active-channel',
   'worldmonitor-runtime-feature-toggles',
-  'wm-breaking-alerts-v1',
   'wm-globe-render-scale',
   'wm-live-streams-always-on',
+  'worldmonitor-webcam-prefs',
   'wm-map-theme:',
   'map-height',
   'map-pinned',

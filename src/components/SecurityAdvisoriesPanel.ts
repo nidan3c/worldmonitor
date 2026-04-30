@@ -18,6 +18,7 @@ export class SecurityAdvisoriesPanel extends Panel {
       showCount: true,
       trackActivity: true,
       infoTooltip: t('components.securityAdvisories.infoTooltip'),
+      defaultRowSpan: 2,
     });
     this.showLoading(t('components.securityAdvisories.loading'));
 
@@ -167,8 +168,10 @@ export class SecurityAdvisoriesPanel extends Panel {
             <span class="sa-badge ${levelCls}">${levelLabel}</span>
             <span class="sa-source">${flag} ${escapeHtml(a.source)}</span>
           </div>
-          <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="sa-title">${escapeHtml(a.title)}</a>
-          <div class="sa-time">${this.formatTime(a.pubDate)}</div>
+          <div class="sa-body">
+            <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="sa-title">${escapeHtml(a.title)}</a>
+            <span class="sa-time">${this.formatTime(a.pubDate)}</span>
+          </div>
         </div>`;
       }).join('');
     }

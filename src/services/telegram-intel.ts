@@ -1,5 +1,5 @@
 import { proxyUrl } from '@/utils';
-import { isDesktopRuntime } from '@/services/runtime';
+import { isDesktopRuntime, toApiUrl } from '@/services/runtime';
 
 export interface TelegramItem {
   id: string;
@@ -12,6 +12,7 @@ export interface TelegramItem {
   topic: string;
   tags: string[];
   earlySignal: boolean;
+  mediaUrls?: string[];
 }
 
 export interface TelegramFeedResponse {
@@ -27,10 +28,10 @@ export const TELEGRAM_TOPICS = [
   { id: 'all', labelKey: 'components.telegramIntel.filterAll' },
   { id: 'breaking', labelKey: 'components.telegramIntel.filterBreaking' },
   { id: 'conflict', labelKey: 'components.telegramIntel.filterConflict' },
-  { id: 'alerts', labelKey: 'components.telegramIntel.filterAlerts' },
-  { id: 'osint', labelKey: 'components.telegramIntel.filterOsint' },
-  { id: 'politics', labelKey: 'components.telegramIntel.filterPolitics' },
+  { id: 'geopolitics', labelKey: 'components.telegramIntel.filterGeopolitics' },
   { id: 'middleeast', labelKey: 'components.telegramIntel.filterMiddleeast' },
+  { id: 'osint', labelKey: 'components.telegramIntel.filterOsint' },
+  { id: 'cyber', labelKey: 'components.telegramIntel.filterCyber' },
 ] as const;
 
 let cachedResponse: TelegramFeedResponse | null = null;
@@ -39,7 +40,7 @@ const CACHE_TTL = 30_000;
 
 function telegramFeedUrl(limit: number): string {
   const path = `/api/telegram-feed?limit=${limit}`;
-  return isDesktopRuntime() ? proxyUrl(path) : path;
+  return isDesktopRuntime() ? proxyUrl(path) : toApiUrl(path);
 }
 
 export async function fetchTelegramFeed(limit = 50): Promise<TelegramFeedResponse> {

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const panelLayoutSrc = readFileSync(resolve(__dirname, '../src/app/panel-layout.ts'), 'utf-8');
 
-const VARIANT_FILES = ['full', 'tech', 'finance', 'commodity', 'happy'];
+const VARIANT_FILES = ['full', 'tech', 'finance', 'commodity', 'energy', 'happy'];
 
 function parsePanelKeys(variant) {
   const src = readFileSync(resolve(__dirname, '../src/config/panels.ts'), 'utf-8');
@@ -39,10 +39,13 @@ describe('panel-config guardrails', () => {
 
     const allowedContexts = [
       /this\.ctx\.panels\[key\]\s*=/,             // createPanel helper
-      /this\.ctx\.panels\['deduction'\]/,          // desktop-only, intentionally ungated
+      /this\.ctx\.panels\['deduction'\]/,          // async-mounted PRO panel — gated via WEB_PREMIUM_PANELS
+      /this\.ctx\.panels\['regional-intelligence'\]/, // async-mounted PRO panel — gated via WEB_PREMIUM_PANELS
       /this\.ctx\.panels\['runtime-config'\]/,     // desktop-only, intentionally ungated
+      /this\.ctx\.panels\['live-news'\]/,          // mountLiveNewsIfReady — has its own channel guard
       /panel as unknown as/,                       // lazyPanel generic cast
       /this\.ctx\.panels\[panelKey\]\s*=/,         // FEEDS loop (guarded by DEFAULT_PANELS check)
+      /this\.ctx\.panels\[spec\.id\]\s*=/,         // custom widgets (cw- prefix, always enabled)
     ];
 
     for (let i = 0; i < lines.length; i++) {
@@ -71,6 +74,19 @@ describe('panel-config guardrails', () => {
     );
   });
 
+  it('reapplies panel settings after mounting the async deduction panel', () => {
+    const deductionMount = panelLayoutSrc.match(
+      /import\('@\/components\/DeductionPanel'\)\.then\(\(\{ DeductionPanel \}\) => \{([\s\S]*?)\n\s*\}\);/
+    );
+
+    assert.ok(deductionMount, 'expected async DeductionPanel mount block in panel-layout.ts');
+    assert.match(
+      deductionMount[1],
+      /this\.applyPanelSettings\(\);/,
+      'async DeductionPanel mount must replay saved panel settings after insertion',
+    );
+  });
+
   it('panel keys are consistent across variant configs (no typos)', () => {
     const allKeys = new Map();
     for (const v of VARIANT_FILES) {
@@ -81,12 +97,16 @@ describe('panel-config guardrails', () => {
     }
 
     const keys = [...allKeys.keys()];
+    const allowedPairs = new Set([
+      'ai-regulation|fin-regulation',
+      'fin-regulation|ai-regulation',
+    ]);
     const typos = [];
     for (let i = 0; i < keys.length; i++) {
       for (let j = i + 1; j < keys.length; j++) {
         const minLen = Math.min(keys[i].length, keys[j].length);
         if (minLen < 5) continue;
-        if (levenshtein(keys[i], keys[j]) <= 2 && keys[i] !== keys[j]) {
+        if (levenshtein(keys[i], keys[j]) <= 2 && keys[i] !== keys[j] && !allowedPairs.has(`${keys[i]}|${keys[j]}`)) {
           typos.push(`"${keys[i]}" ↔ "${keys[j]}"`);
         }
       }
