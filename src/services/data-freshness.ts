@@ -4,40 +4,10 @@
  * showing misleading "all clear" when we actually have no data.
  */
 
-import { getCSSColor } from '@/utils';
+import { getCSSColor } from '@/utils/theme-colors';
+import type { DataSourceId } from '@/types';
 
-export type DataSourceId =
-  | 'acled'      // Protests/conflicts
-  | 'opensky'    // Military flights
-  | 'wingbits'   // Aircraft enrichment
-  | 'ais'        // Vessel tracking
-  | 'usgs'       // Earthquakes
-  | 'gdelt'      // News velocity
-  | 'gdelt_doc'  // GDELT Doc protest intelligence
-  | 'rss'        // RSS feeds
-  | 'polymarket' // Prediction markets
-  | 'predictions' // Predictions feed
-  | 'pizzint'    // PizzINT monitoring
-  | 'outages'    // Internet outages
-  | 'cyber_threats' // Cyber threat IOC layer
-  | 'weather'    // Weather alerts
-  | 'economic'   // Economic indicators (FRED)
-  | 'oil'        // EIA oil analytics
-  | 'spending'        // USASpending.gov
-  | 'firms'          // NASA FIRMS satellite fires
-  | 'acled_conflict' // ACLED battles/explosions/violence
-  | 'ucdp'           // UCDP conflict classification
-  | 'hapi'           // HDX HAPI aggregated conflict data
-  | 'ucdp_events'    // UCDP georeferenced conflict events
-  | 'unhcr'          // UNHCR displacement data
-  | 'climate'        // Climate anomaly data (Open-Meteo)
-  | 'worldpop'       // WorldPop population exposure
-  | 'giving'         // Global giving activity data
-  | 'bis'            // BIS central bank data
-  | 'wto_trade'      // WTO trade policy data
-  | 'supply_chain'   // Supply chain disruption intelligence
-  | 'security_advisories'  // Government travel/security advisories
-  | 'gpsjam';              // GPS/GNSS interference
+export type { DataSourceId } from '@/types';
 
 export type FreshnessStatus = 'fresh' | 'stale' | 'very_stale' | 'no_data' | 'disabled' | 'error';
 
@@ -50,6 +20,8 @@ export interface DataSourceState {
   enabled: boolean;
   status: FreshnessStatus;
   requiredForRisk: boolean; // Is this source important for risk assessment?
+  maxStaleMin?: number;
+  healthStatus?: string;
 }
 
 export interface DataFreshnessSummary {
@@ -62,6 +34,17 @@ export interface DataFreshnessSummary {
   coveragePercent: number;
   oldestUpdate: Date | null;
   newestUpdate: Date | null;
+}
+
+export interface SeedHealthUpdate {
+  sourceId: DataSourceId;
+  status: string;
+  records?: number | null;
+  seedAgeMin?: number | null;
+  maxStaleMin?: number | null;
+  contentAgeMin?: number | null;
+  maxContentAgeMin?: number | null;
+  checkedAtMs?: number;
 }
 
 // Thresholds in milliseconds
@@ -101,10 +84,14 @@ const SOURCE_METADATA: Record<DataSourceId, { name: string; requiredForRisk: boo
   worldpop: { name: 'Population Exposure', requiredForRisk: false, panelId: 'population-exposure' },
   giving: { name: 'Global Giving Activity', requiredForRisk: false, panelId: 'giving' },
   bis: { name: 'BIS Central Banks', requiredForRisk: false, panelId: 'economic' },
+  bls: { name: 'BLS Labor Market', requiredForRisk: false, panelId: 'economic' },
   wto_trade: { name: 'WTO Trade Policy', requiredForRisk: false, panelId: 'trade-policy' },
   supply_chain: { name: 'Supply Chain Intelligence', requiredForRisk: false, panelId: 'supply-chain' },
   security_advisories: { name: 'Security Advisories', requiredForRisk: false, panelId: 'security-advisories' },
+  sanctions_pressure: { name: 'Sanctions Pressure', requiredForRisk: false, panelId: 'sanctions-pressure' },
+  radiation: { name: 'Radiation Watch', requiredForRisk: false, panelId: 'radiation-watch' },
   gpsjam: { name: 'GPS/GNSS Interference', requiredForRisk: false, panelId: 'map' },
+  treasury_revenue: { name: 'Treasury Customs Revenue', requiredForRisk: false, panelId: 'trade-policy' },
 };
 
 class DataFreshnessTracker {
@@ -151,6 +138,54 @@ class DataFreshnessTracker {
       source.status = 'error';
       this.notifyListeners();
     }
+  }
+
+  /**
+   * Merge cadence-aware seed freshness from /api/health.
+   */
+  recordSeedHealth(updates: SeedHealthUpdate[]): void {
+    let changed = false;
+    for (const update of updates) {
+      const source = this.sources.get(update.sourceId);
+      if (!source) continue;
+
+      const records = typeof update.records === 'number' && Number.isFinite(update.records)
+        ? Math.max(0, update.records)
+        : source.itemCount;
+      const maxStaleMin = typeof update.maxStaleMin === 'number' && update.maxStaleMin > 0
+        ? update.maxStaleMin
+        : undefined;
+      const maxContentAgeMin = typeof update.maxContentAgeMin === 'number' && update.maxContentAgeMin > 0
+        ? update.maxContentAgeMin
+        : undefined;
+      const checkedAtMs = Number.isFinite(update.checkedAtMs)
+        ? update.checkedAtMs!
+        : Date.now();
+      const seedAgeMin = typeof update.seedAgeMin === 'number' && update.seedAgeMin >= 0
+        ? update.seedAgeMin
+        : null;
+      const contentAgeMin = typeof update.contentAgeMin === 'number' && update.contentAgeMin >= 0
+        ? update.contentAgeMin
+        : null;
+      const ageMin = update.status === 'STALE_CONTENT' && contentAgeMin !== null
+        ? contentAgeMin
+        : seedAgeMin;
+
+      source.itemCount = records;
+      source.maxStaleMin = update.status === 'STALE_CONTENT'
+        ? (maxContentAgeMin ?? maxStaleMin)
+        : maxStaleMin;
+      source.healthStatus = update.status;
+      source.lastError = this.healthStatusIsError(update.status) ? update.status : null;
+      source.lastUpdate = this.healthStatusHasNoData(update.status)
+        ? null
+        : ageMin !== null
+        ? new Date(checkedAtMs - ageMin * 60_000)
+        : source.lastUpdate;
+      source.status = source.enabled ? this.calculateStatus(source) : 'disabled';
+      changed = true;
+    }
+    if (changed) this.notifyListeners();
   }
 
   /**
@@ -274,10 +309,25 @@ class DataFreshnessTracker {
     if (!source.lastUpdate) return 'no_data';
 
     const age = Date.now() - source.lastUpdate.getTime();
-    if (age < FRESH_THRESHOLD) return 'fresh';
-    if (age < STALE_THRESHOLD) return 'stale';
-    if (age < VERY_STALE_THRESHOLD) return 'very_stale';
+    const freshThreshold = source.maxStaleMin ? source.maxStaleMin * 60_000 : FRESH_THRESHOLD;
+    const staleThreshold = source.maxStaleMin ? source.maxStaleMin * 2 * 60_000 : STALE_THRESHOLD;
+    const veryStaleThreshold = source.maxStaleMin ? source.maxStaleMin * 3 * 60_000 : VERY_STALE_THRESHOLD;
+    if (age <= freshThreshold) return source.healthStatus === 'COVERAGE_PARTIAL'
+      || source.healthStatus === 'STALE_CONTENT'
+      || source.healthStatus === 'STALE_SEED'
+      ? 'stale'
+      : 'fresh';
+    if (age <= staleThreshold) return 'stale';
+    if (age <= veryStaleThreshold) return 'very_stale';
     return 'no_data'; // Too old, treat as no data
+  }
+
+  private healthStatusIsError(status: string): boolean {
+    return status === 'SEED_ERROR' || status === 'REDIS_DOWN' || status === 'REDIS_PARTIAL';
+  }
+
+  private healthStatusHasNoData(status: string): boolean {
+    return status === 'EMPTY' || status === 'EMPTY_DATA' || status === 'EMPTY_ON_DEMAND';
   }
 
   private notifyListeners(): void {
@@ -361,10 +411,14 @@ const INTELLIGENCE_GAP_MESSAGES: Record<DataSourceId, string> = {
   worldpop: 'Population exposure data unavailable—affected population unknown',
   giving: 'Global giving activity data unavailable',
   bis: 'Central bank policy data may be stale—BIS feed unavailable',
+  bls: 'Labor market data unavailable—BLS feed not yet seeded',
   wto_trade: 'Trade policy intelligence unavailable—WTO data not updating',
   supply_chain: 'Supply chain disruption status unavailable—chokepoint monitoring offline',
   security_advisories: 'Government travel advisory data unavailable—security alerts may be missed',
+  sanctions_pressure: 'Structured sanctions pressure unavailable\u2014OFAC designation visibility reduced',
+  radiation: 'Radiation monitoring degraded—EPA RadNet and Safecast observations unavailable',
   gpsjam: 'GPS/GNSS interference data unavailable—jamming zones undetected',
+  treasury_revenue: 'US Treasury customs revenue data unavailable',
 };
 
 /**

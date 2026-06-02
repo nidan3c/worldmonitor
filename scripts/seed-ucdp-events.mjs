@@ -3,6 +3,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -179,6 +180,30 @@ async function main() {
   const capped = mapped.slice(0, MAX_EVENTS);
   if (mapped.length > MAX_EVENTS) console.log(`  Capped: ${mapped.length} → ${MAX_EVENTS}`);
 
+  // Guard: never overwrite existing data with empty results.
+  // Extend TTL on existing key instead so health stays OK.
+  if (capped.length === 0) {
+    console.warn(`  0 events after processing — extending existing key TTL (preserving last good data)`);
+    try {
+      const r1 = await fetch(redisUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${redisToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(['EXPIRE', REDIS_KEY, 86400]),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!r1.ok) console.warn(`  EXPIRE ${REDIS_KEY} failed: HTTP ${r1.status}`);
+      const r2 = await fetch(redisUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${redisToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(['EXPIRE', 'seed-meta:conflict:ucdp-events', 604800]),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!r2.ok) console.warn(`  EXPIRE seed-meta failed: HTTP ${r2.status}`);
+      if (r1.ok && r2.ok) console.log(`  Extended TTL on ${REDIS_KEY} and seed-meta`);
+    } catch (e) { console.warn(`  TTL extension failed: ${e.message}`); }
+    process.exit(0);
+  }
+
   const payload = {
     events: capped,
     fetchedAt: Date.now(),
@@ -232,7 +257,7 @@ async function main() {
   if (getResp.ok) {
     const getData = await getResp.json();
     if (getData.result) {
-      const parsed = JSON.parse(getData.result);
+      const parsed = unwrapEnvelope(JSON.parse(getData.result)).data;
       console.log(`\n  Verified: ${parsed.events?.length} events in Redis`);
       console.log(`  Version: ${parsed.version} | fetchedAt: ${new Date(parsed.fetchedAt).toISOString()}`);
     }
@@ -242,7 +267,7 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('FATAL:', err.message || err);
+  const _cause = err.cause ? ` (cause: ${err.cause.message || err.cause.code || err.cause})` : ''; console.error('FATAL:', (err.message || err) + _cause);
   // Exit gracefully for cron — crashing restarts the container unnecessarily.
   // The health endpoint will flag stale data via seed-meta.
   process.exit(0);
